@@ -1,0 +1,75 @@
+version: '3.9'
+
+networks:
+  tariffexpert_net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+
+services:
+  postgres:
+    image: postgres:15
+    env_file: .env
+    ports:
+      - "5432:5432"
+    container_name: tariffexpert_db
+    restart: unless-stopped
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - tariffexpert_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: tariffexpert_api
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "8000:8000" 
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./backend/src:/app/src
+      - ./backend/alembic.ini:/app/alembic.ini
+      - ./backend/migrations:/app/migrations
+    networks:
+      - tariffexpert_net
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: tariffexpert_frontend
+    restart: unless-stopped
+    environment:
+      - VITE_API_BASE_URL=http://api:8000/api/v1
+    ports:
+      - "3000:80"
+    depends_on:
+      - api
+    networks:
+      - tariffexpert_net
+
+  nginx-proxy:
+    image: 'jc21/nginx-proxy-manager:latest'
+    container_name: tariffexpert_nginx
+    restart: unless-stopped
+    ports:
+      - '80:80'
+      - '443:443'
+      - '81:81'
+    volumes:
+      - ./nginx_data:/data
+      - ./nginx_letsencrypt:/etc/letsencrypt
+    networks:
+      - tariffexpert_net
