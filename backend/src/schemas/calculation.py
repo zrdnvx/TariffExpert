@@ -1,4 +1,5 @@
 from uuid import UUID
+from datetime import datetime
 
 from pydantic import BaseModel, Field, ConfigDict
 from typing import List
@@ -8,6 +9,7 @@ from src.schemas.building import BuildingBase
 
 
 class CalculationItemResponse(BaseModel):
+    id: int
     # Эти поля Pydantic возьмет из CalculationItem.tariff (благодаря property в модели)
     item_number: str
     name: str
@@ -25,6 +27,34 @@ class CalculationResponse(BaseModel):
     items: List[CalculationItemResponse]
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class CalculationHistoryItemResponse(BaseModel):
+    id: UUID
+    created_at: datetime
+    building_id: UUID
+    building_address: str
+    total_rate: Decimal
+
+
+class CalculationDetailResponse(BaseModel):
+    id: UUID
+    building_id: UUID
+    building_address: str
+    created_at: datetime
+    total_rate: Decimal
+    items: List[CalculationItemResponse]
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CalculationItemUpdate(BaseModel):
+    item_id: int
+    applied_rate: Decimal = Field(..., ge=Decimal("0"))
+
+
+class CalculationUpdateRequest(BaseModel):
+    items: List[CalculationItemUpdate]
 
 
 class DetailCalculationRequest(BuildingBase):

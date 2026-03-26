@@ -35,6 +35,31 @@ class BuildingCreate(BuildingBase):
     pass
 
 
+class BuildingUpdate(BaseModel):
+    address: Optional[str] = None
+    fias_id: Optional[str] = None
+    total_area: Optional[Decimal] = Field(None, gt=0)
+    floors_count: Optional[int] = Field(None, gt=0)
+    year_built: Optional[int] = None
+
+    has_cws: Optional[bool] = None
+    has_hws: Optional[bool] = None
+    has_sewerage: Optional[bool] = None
+    has_gas: Optional[bool] = None
+    has_elevator: Optional[bool] = None
+    has_trash_chute: Optional[bool] = None
+    has_fire_alarm: Optional[bool] = None
+    has_central_heating: Optional[bool] = None
+    has_local_boiler: Optional[bool] = None
+    has_recirculation_pumps: Optional[bool] = None
+    has_askue: Optional[bool] = None
+
+    has_cleaning_stairs: Optional[bool] = None
+    has_trees_maintenance: Optional[bool] = None
+    has_sandbox_service: Optional[bool] = None
+    has_icicle_removal: Optional[bool] = None
+
+
 class BuildingResponse(BuildingBase):
     model_config = ConfigDict(from_attributes=True)
     id: UUID

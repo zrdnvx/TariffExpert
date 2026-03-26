@@ -1,9 +1,7 @@
 import axios, { AxiosError } from "axios";
 import { useAuth } from "../state/AuthContext";
 import { useMemo } from "react";
-
-const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000/api/v1";
+import { API_BASE_URL } from "./config";
 
 type RefreshResponse = {
   access_token: string;

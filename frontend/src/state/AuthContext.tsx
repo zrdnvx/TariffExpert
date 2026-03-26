@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, ReactNode, useEffect } from "react";
 import Cookies from "js-cookie";
 import axios from "axios";
+import { API_BASE_URL } from "../api/config";
 
 type Tokens = {
   accessToken: string;
@@ -25,27 +26,26 @@ type AuthContextType = {
 };
 
 const STORAGE_KEY = "tariffexpert_tokens";
-const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000/api/v1";
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [tokens, setTokensState] = useState<Tokens | null>(null);
-  const [user, setUser] = useState<UserProfile | null>(null);
-
-  useEffect(() => {
-    const raw = Cookies.get(STORAGE_KEY);
-    if (!raw) return;
-    try {
-      const parsed = JSON.parse(raw) as Tokens;
-      if (parsed.accessToken && parsed.refreshToken) {
-        setTokensState(parsed);
-      }
-    } catch {
-      // ignore
+const readStoredTokens = (): Tokens | null => {
+  const raw = Cookies.get(STORAGE_KEY);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as Tokens;
+    if (parsed.accessToken && parsed.refreshToken) {
+      return parsed;
     }
-  }, []);
+  } catch {
+    // ignore broken cookie value
+  }
+  return null;
+};
+
+export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+  const [tokens, setTokensState] = useState<Tokens | null>(readStoredTokens);
+  const [user, setUser] = useState<UserProfile | null>(null);
 
   // Автовосстановление профиля пользователя при наличии токена (после F5)
   useEffect(() => {

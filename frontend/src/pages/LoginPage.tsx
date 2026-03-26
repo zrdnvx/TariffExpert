@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { useApiClient } from "../api/client";
 import { useAuth, UserProfile } from "../state/AuthContext";
+import { getApiErrorMessage } from "../api/errors";
 import {
   Box,
   Button,
@@ -25,9 +26,6 @@ type MeResponse = {
   city_id: string;
   city_name: string;
 };
-
-const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000/api/v1";
 
 export const LoginPage: React.FC = () => {
   const api = useApiClient();
@@ -70,8 +68,7 @@ export const LoginPage: React.FC = () => {
       setUsername("");
       setPassword("");
     } catch (err: any) {
-      console.error(err);
-      setStatus("Ошибка входа: проверьте логин/пароль");
+      setStatus(getApiErrorMessage(err, "Ошибка входа: проверьте логин/пароль"));
       setTokens(null);
       setUser(null);
     } finally {
@@ -98,7 +95,6 @@ export const LoginPage: React.FC = () => {
           p: 4,
           minWidth: 340,
           maxWidth: 420,
-          background: "linear-gradient(145deg, #020617, #0b1120)",
           border: "1px solid rgba(148,163,184,0.3)",
         }}
       >

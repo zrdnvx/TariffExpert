@@ -1,20 +1,25 @@
 from uuid import UUID
 from io import BytesIO
 from datetime import timezone
+from decimal import Decimal
+import re
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
-from openpyxl.utils import get_column_letter
 
 from src.api.services.calculator import TariffCalculatorService
 from src.db.models.models import Building, Calculation, CalculationItem
 from src.schemas.calculation import (
     CalculationResponse,
+    CalculationHistoryItemResponse,
+    CalculationDetailResponse,
+    CalculationUpdateRequest,
     DetailCalculationRequest,
     DetailCalculationResponse,
     DetailComponentResponse,
@@ -27,6 +32,28 @@ router = APIRouter(
     tags=["Calculations"],
     dependencies=[Depends(get_current_user)],
 )
+
+
+def _safe_filename_part(value: str, max_len: int = 80) -> str:
+    cleaned = re.sub(r"[\\/:*?\"<>|]+", "", value).strip()
+    cleaned = re.sub(r"\s+", "_", cleaned)
+    return cleaned[:max_len] if cleaned else "dom"
+
+
+def _safe_ascii_filename(value: str, max_len: int = 100) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", value).strip("._-")
+    if not cleaned:
+        return "calculation"
+    return cleaned[:max_len]
+
+
+def _outer_border_for_cell(row: int, col: str, top: int, bottom: int, left_col: str, right_col: str) -> Border:
+    return Border(
+        left=Side(style="medium" if col == left_col else "thin", color="000000"),
+        right=Side(style="medium" if col == right_col else "thin", color="000000"),
+        top=Side(style="medium" if row == top else "thin", color="000000"),
+        bottom=Side(style="medium" if row == bottom else "thin", color="000000"),
+    )
 
 
 @router.post("/{building_id}/run", response_model=CalculationResponse)
@@ -54,6 +81,136 @@ async def run_calculation(
     )
     result_with_items = await db.execute(stmt)
     return result_with_items.scalar_one()
+
+
+@router.get("/", response_model=list[CalculationHistoryItemResponse])
+async def list_calculations(
+    db: AsyncSession = Depends(get_async_session),
+    user: CurrentUser = Depends(get_current_user),
+):
+    stmt = (
+        select(Calculation, Building.address)
+        .join(Building, Building.id == Calculation.building_id)
+        .where(Calculation.organization_id == user.organization_id)
+        .order_by(Calculation.created_at.desc())
+    )
+    result = await db.execute(stmt)
+    rows = result.all()
+    return [
+        CalculationHistoryItemResponse(
+            id=calc.id,
+            created_at=calc.created_at,
+            building_id=calc.building_id,
+            building_address=address,
+            total_rate=calc.total_rate,
+        )
+        for calc, address in rows
+    ]
+
+
+@router.get("/{calculation_id}", response_model=CalculationDetailResponse)
+async def get_calculation(
+    calculation_id: UUID,
+    db: AsyncSession = Depends(get_async_session),
+    user: CurrentUser = Depends(get_current_user),
+):
+    stmt = (
+        select(Calculation)
+        .options(
+            selectinload(Calculation.items).joinedload(CalculationItem.tariff),
+            selectinload(Calculation.building),
+        )
+        .where(Calculation.id == calculation_id)
+    )
+    result = await db.execute(stmt)
+    calc = result.scalar_one_or_none()
+    if not calc:
+        raise HTTPException(status_code=404, detail="Calculation not found")
+    if calc.organization_id != user.organization_id and user.role != "superadmin":
+        raise HTTPException(status_code=404, detail="Calculation not found")
+
+    return CalculationDetailResponse(
+        id=calc.id,
+        building_id=calc.building_id,
+        building_address=calc.building.address if calc.building else "—",
+        created_at=calc.created_at,
+        total_rate=calc.total_rate,
+        items=calc.items,
+    )
+
+
+@router.patch("/{calculation_id}", response_model=CalculationDetailResponse)
+async def update_calculation(
+    calculation_id: UUID,
+    payload: CalculationUpdateRequest,
+    db: AsyncSession = Depends(get_async_session),
+    user: CurrentUser = Depends(get_current_user),
+):
+    stmt = (
+        select(Calculation)
+        .options(
+            selectinload(Calculation.items).joinedload(CalculationItem.tariff),
+            selectinload(Calculation.building),
+        )
+        .where(Calculation.id == calculation_id)
+    )
+    result = await db.execute(stmt)
+    calc = result.scalar_one_or_none()
+    if not calc:
+        raise HTTPException(status_code=404, detail="Calculation not found")
+    if calc.organization_id != user.organization_id and user.role != "superadmin":
+        raise HTTPException(status_code=404, detail="Calculation not found")
+
+    items_by_id = {item.id: item for item in calc.items}
+    for upd in payload.items:
+        item = items_by_id.get(upd.item_id)
+        if not item:
+            raise HTTPException(status_code=400, detail=f"Calculation item not found: {upd.item_id}")
+        item.applied_rate = upd.applied_rate
+
+    calc.total_rate = sum((Decimal(item.applied_rate) for item in calc.items), Decimal("0"))
+    await db.commit()
+    await db.refresh(calc)
+
+    refreshed_stmt = (
+        select(Calculation)
+        .options(
+            selectinload(Calculation.items).joinedload(CalculationItem.tariff),
+            selectinload(Calculation.building),
+        )
+        .where(Calculation.id == calc.id)
+    )
+    refreshed_res = await db.execute(refreshed_stmt)
+    updated = refreshed_res.scalar_one()
+
+    return CalculationDetailResponse(
+        id=updated.id,
+        building_id=updated.building_id,
+        building_address=updated.building.address if updated.building else "—",
+        created_at=updated.created_at,
+        total_rate=updated.total_rate,
+        items=updated.items,
+    )
+
+
+@router.delete("/{calculation_id}")
+async def delete_calculation(
+    calculation_id: UUID,
+    db: AsyncSession = Depends(get_async_session),
+    user: CurrentUser = Depends(get_current_user),
+):
+    calc = await db.get(Calculation, calculation_id)
+    if not calc:
+        raise HTTPException(status_code=404, detail="Calculation not found")
+    if calc.organization_id != user.organization_id and user.role != "superadmin":
+        raise HTTPException(status_code=404, detail="Calculation not found")
+
+    await db.execute(
+        delete(CalculationItem).where(CalculationItem.calculation_id == calculation_id)
+    )
+    await db.execute(delete(Calculation).where(Calculation.id == calculation_id))
+    await db.commit()
+    return {"status": "ok"}
 
 
 @router.post("/detail", response_model=DetailCalculationResponse)
@@ -136,7 +293,10 @@ async def export_calculation_to_excel(
 
     building = calc.building
     total_area = float(building.total_area) if building else 0.0
-    created_at = calc.created_at.astimezone(timezone.utc).strftime("%d.%m.%Y %H:%M UTC")
+    created_dt_utc = calc.created_at.astimezone(timezone.utc)
+    created_date_str = created_dt_utc.strftime("%d.%m.%Y")
+    created_time_str = created_dt_utc.strftime("%H:%M UTC")
+    created_date_for_filename = calc.created_at.astimezone(timezone.utc).strftime("%Y-%m-%d")
     total_amount = float(calc.total_rate) * total_area
 
     # Заголовок как в образце
@@ -155,39 +315,51 @@ async def export_calculation_to_excel(
     ws["A3"].alignment = Alignment(horizontal="center")
     ws["A3"].font = Font(size=10)
 
-    # Блок справочной информации
-    ws.merge_cells("A5:D5")
-    ws["A5"] = "Справочная информация"
-    ws["A5"].font = header_font
-    ws["A5"].alignment = Alignment(horizontal="center")
+    # Блок информации о доме и расчете (правый, с рамкой)
+    ws.merge_cells("C5:D5")
+    ws["C5"] = "Сведения о доме и расчете"
+    ws["C5"].font = header_font
+    ws["C5"].alignment = Alignment(horizontal="center")
+    ws["C5"].fill = header_fill
 
+    yes_no = lambda v: "Да" if v else "Нет"
     info_rows = [
-        ("ID расчета", str(calc.id)),
-        ("Дата расчета", created_at),
-        ("ID дома", str(calc.building_id)),
+        ("Дата расчета", created_date_str),
+        ("Время расчета", created_time_str),
+        ("Адрес дома", building.address if building else "—"),
         ("Общая площадь дома, кв.м", total_area),
         ("Этажность дома", building.floors_count if building else "—"),
         ("Год ввода в эксплуатацию", building.year_built if building else "—"),
+        ("Лифт", yes_no(getattr(building, "has_elevator", False))),
+        ("Газ", yes_no(getattr(building, "has_gas", False))),
+        ("Мусоропровод", yes_no(getattr(building, "has_trash_chute", False))),
+        ("Центральное отопление", yes_no(getattr(building, "has_central_heating", False))),
+        ("Локальная котельная", yes_no(getattr(building, "has_local_boiler", False))),
         ("Размер обязательного платежа, руб", total_amount),
         ("Размер обязательного платежа, руб/м²", float(calc.total_rate)),
     ]
 
     row = 6
+    info_start_row = row
     for label, value in info_rows:
-        ws[f"A{row}"] = label
-        ws[f"A{row}"].font = header_font
-        ws[f"A{row}"].alignment = Alignment(vertical="center")
-        ws[f"A{row}"].border = thin_border
-        ws.merge_cells(f"B{row}:D{row}")
-        ws[f"B{row}"] = value
-        ws[f"B{row}"].font = normal_font
-        ws[f"B{row}"].alignment = Alignment(horizontal="right", vertical="center")
-        ws[f"B{row}"].border = thin_border
-        ws[f"C{row}"].border = thin_border
-        ws[f"D{row}"].border = thin_border
+        ws[f"C{row}"] = label
+        ws[f"C{row}"].font = header_font
+        ws[f"C{row}"].alignment = Alignment(vertical="center", wrap_text=True)
+        ws[f"D{row}"] = value
+        ws[f"D{row}"].font = normal_font
+        ws[f"D{row}"].alignment = Alignment(horizontal="right", vertical="center", wrap_text=True)
         if isinstance(value, float):
-            ws[f"B{row}"].number_format = "#,##0.00"
+            ws[f"D{row}"].number_format = "#,##0.00"
+        ws.row_dimensions[row].height = 22
         row += 1
+    info_end_row = row - 1
+
+    # Рамка вокруг правого блока C5:D{info_end_row}
+    for r in range(5, info_end_row + 1):
+        for c in ("C", "D"):
+            ws[f"{c}{r}"].border = _outer_border_for_cell(
+                r, c, 5, info_end_row, "C", "D"
+            )
 
     row += 1
     start_table_row = row
@@ -307,12 +479,21 @@ async def export_calculation_to_excel(
     wb.save(stream)
     stream.seek(0)
 
-    filename = f"calculation_{calculation_id}.xlsx"
+    address_part = _safe_filename_part(building.address if building else "dom")
+    filename_utf8 = f"raschet_{address_part}_{created_date_for_filename}.xlsx"
+    filename_ascii = _safe_ascii_filename(filename_utf8)
+    content_disposition = (
+        f"attachment; filename=\"{filename_ascii}\"; "
+        f"filename*=UTF-8''{quote(filename_utf8)}"
+    )
     return StreamingResponse(
         stream,
         media_type=(
             "application/vnd.openxmlformats-officedocument."
             "spreadsheetml.sheet"
         ),
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={
+            "Content-Disposition": content_disposition,
+            "Access-Control-Expose-Headers": "Content-Disposition",
+        },
     )

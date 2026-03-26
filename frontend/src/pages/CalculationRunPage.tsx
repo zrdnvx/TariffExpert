@@ -2,10 +2,13 @@ import React, { useEffect, useState } from "react";
 import { useApiClient } from "../api/client";
 import { useLocation } from "react-router-dom";
 import { getApiErrorMessage } from "../api/errors";
+import { CalculationHistoryPage } from "./CalculationHistoryPage";
 import {
   Box,
   Button,
   Paper,
+  Tab,
+  Tabs,
   TextField,
   Typography,
   TableContainer,
@@ -16,6 +19,7 @@ import {
   TableBody,
   MenuItem,
 } from "@mui/material";
+import DownloadIcon from "@mui/icons-material/Download";
 
 type BuildingOption = {
   id: string;
@@ -34,9 +38,25 @@ type CalculationResult = {
   items: CalculationItem[];
 };
 
+const extractFilenameFromDisposition = (header?: string): string | null => {
+  if (!header) return null;
+  const utfMatch = header.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utfMatch?.[1]) {
+    try {
+      return decodeURIComponent(utfMatch[1]);
+    } catch {
+      return utfMatch[1];
+    }
+  }
+  const asciiMatch = header.match(/filename="?([^";]+)"?/i);
+  return asciiMatch?.[1] ?? null;
+};
+
 export const CalculationRunPage: React.FC = () => {
   const api = useApiClient();
   const location = useLocation();
+  const [tab, setTab] = useState(0);
+  const [justCreatedCalculationId, setJustCreatedCalculationId] = useState<string | null>(null);
   const [buildingId, setBuildingId] = useState<string>("");
   const [buildings, setBuildings] = useState<BuildingOption[]>([]);
   const [result, setResult] = useState<CalculationResult | null>(null);
@@ -46,6 +66,8 @@ export const CalculationRunPage: React.FC = () => {
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const fromUrl = params.get("buildingId");
+    const tabParam = params.get("tab");
+    setTab(tabParam === "history" ? 1 : 0);
     if (fromUrl) {
       setBuildingId(fromUrl);
     }
@@ -72,6 +94,8 @@ export const CalculationRunPage: React.FC = () => {
     try {
       const res = await api.post<CalculationResult>(`/calculations/${buildingId}/run`);
       setResult(res.data);
+      setJustCreatedCalculationId(res.data.id);
+      setTab(1);
     } catch (err) {
       setError(getApiErrorMessage(err, "Ошибка расчета. Проверьте дом и авторизацию."));
     } finally {
@@ -88,7 +112,8 @@ export const CalculationRunPage: React.FC = () => {
       const url = window.URL.createObjectURL(new Blob([res.data]));
       const a = document.createElement("a");
       a.href = url;
-      a.download = `calculation_${result.id}.xlsx`;
+      const disposition = res.headers["content-disposition"] as string | undefined;
+      a.download = extractFilenameFromDisposition(disposition) ?? "raschet.xlsx";
       a.click();
       window.URL.revokeObjectURL(url);
     } catch (err) {
@@ -101,69 +126,81 @@ export const CalculationRunPage: React.FC = () => {
       <Typography variant="h5" sx={{ mb: 1, fontWeight: 600 }}>
         Расчет размера платы
       </Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-        Вставьте идентификатор дома, созданного на предыдущем шаге, и выполните расчет по
-        утвержденным тарифам.
-      </Typography>
-
-      <Paper
-        sx={{
-          p: 3,
-          mb: 3,
-          maxWidth: 720,
-          border: "1px solid rgba(148,163,184,0.3)",
-          background: "linear-gradient(135deg, rgba(15,23,42,0.9), rgba(15,23,42,0.6))",
-        }}
+      <Tabs
+        value={tab}
+        onChange={(_, value) => setTab(value)}
+        sx={{ mb: 2, borderBottom: "1px solid rgba(148,163,184,0.25)" }}
       >
-        <Box
-          component="form"
-          onSubmit={handleSubmit}
-          sx={{ display: "flex", gap: 2, flexWrap: "wrap", alignItems: "center" }}
-        >
-          <TextField
-            select
-            label="Дом"
-            value={buildingId}
-            onChange={(e) => setBuildingId(e.target.value)}
-            sx={{ flexGrow: 1, minWidth: 260 }}
-          >
-            {buildings.map((b) => (
-              <MenuItem key={b.id} value={b.id}>
-                {b.address}
-              </MenuItem>
-            ))}
-          </TextField>
-          <Button type="submit" disabled={loading || !buildingId}>
-            {loading ? "Считаем..." : "Рассчитать"}
-          </Button>
-        </Box>
-        {error && (
-          <Typography variant="body2" color="error" sx={{ mt: 2 }}>
-            {error}
-          </Typography>
-        )}
-      </Paper>
+        <Tab label="Новый расчет" />
+        <Tab label="История расчетов" />
+      </Tabs>
 
-      {result && (
+      {tab === 0 && (
+        <>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+            Выберите дом из списка и выполните расчет по утвержденным тарифам.
+          </Typography>
+          <Paper
+            sx={{
+              p: 3,
+              mb: 3,
+              maxWidth: 720,
+              border: "1px solid rgba(148,163,184,0.3)",
+            }}
+          >
+            <Box
+              component="form"
+              onSubmit={handleSubmit}
+              sx={{ display: "flex", gap: 2, flexWrap: "wrap", alignItems: "center" }}
+            >
+              <TextField
+                select
+                label="Дом"
+                value={buildingId}
+                onChange={(e) => setBuildingId(e.target.value)}
+                sx={{ flexGrow: 1, minWidth: 260 }}
+              >
+                {buildings.map((b) => (
+                  <MenuItem key={b.id} value={b.id}>
+                    {b.address}
+                  </MenuItem>
+                ))}
+              </TextField>
+              <Button type="submit" disabled={loading || !buildingId}>
+                {loading ? "Считаем..." : "Рассчитать"}
+              </Button>
+            </Box>
+            {error && (
+              <Typography variant="body2" color="error" sx={{ mt: 2 }}>
+                {error}
+              </Typography>
+            )}
+          </Paper>
+        </>
+      )}
+
+      {tab === 0 && result && (
         <Box>
           <Paper
             sx={{
               p: 3,
               mb: 2,
               border: "1px solid rgba(148,163,184,0.3)",
-              background: "linear-gradient(135deg, rgba(15,23,42,0.95), rgba(15,23,42,0.7))",
             }}
           >
             <Typography variant="subtitle1" sx={{ mb: 1 }}>
               Результаты расчета
             </Typography>
-            <Typography variant="body2">
-              ID расчета: <code>{result.id}</code>
-            </Typography>
             <Typography variant="body1" sx={{ mt: 1 }}>
               Итоговая ставка: <strong>{result.total_rate}</strong> руб./м²
             </Typography>
-            <Button sx={{ mt: 2 }} variant="outlined" color="secondary" onClick={handleExport}>
+            <Button
+              sx={{ mt: 2 }}
+              variant="contained"
+              color="secondary"
+              startIcon={<DownloadIcon />}
+              onClick={handleExport}
+            >
               Выгрузить в Excel
             </Button>
           </Paper>
@@ -192,6 +229,13 @@ export const CalculationRunPage: React.FC = () => {
             </Table>
           </TableContainer>
         </Box>
+      )}
+
+      {tab === 1 && (
+        <CalculationHistoryPage
+          embedded
+          highlightedCalculationId={justCreatedCalculationId}
+        />
       )}
     </Box>
   );

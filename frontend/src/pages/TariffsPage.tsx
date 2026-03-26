@@ -22,6 +22,8 @@ import {
 } from "@mui/material";
 import SaveIcon from "@mui/icons-material/Save";
 import AddIcon from "@mui/icons-material/Add";
+import RefreshIcon from "@mui/icons-material/Refresh";
+import EditIcon from "@mui/icons-material/Edit";
 
 type Tariff = {
   id: number;
@@ -54,8 +56,21 @@ export const TariffsPage: React.FC = () => {
   const [selectedCityId, setSelectedCityId] = useState<string>("");
 
   const [addOpen, setAddOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editingTariffId, setEditingTariffId] = useState<number | null>(null);
   const [newTariff, setNewTariff] = useState({
     item_number: "",
+    name: "",
+    rate: "",
+    category: "maintenance",
+    is_active: true,
+    min_area: "",
+    max_area: "",
+    is_elevator_required: "",
+    is_gas_required: "",
+    min_floors: "",
+  });
+  const [editTariff, setEditTariff] = useState({
     name: "",
     rate: "",
     category: "maintenance",
@@ -105,12 +120,25 @@ export const TariffsPage: React.FC = () => {
     setEditing((prev) => ({ ...prev, [id]: value }));
   };
 
+  const categoryLabel = (value: string): string => {
+    switch (value) {
+      case "maintenance":
+        return "Содержание";
+      case "repair":
+        return "Текущий ремонт";
+      case "management":
+        return "Управление";
+      default:
+        return value;
+    }
+  };
+
   const handleSaveRate = async (t: Tariff) => {
     const value = editing[t.id];
     if (!value) return;
     const rate = Number(value);
     if (!Number.isFinite(rate) || rate <= 0) {
-      alert("Ставка должна быть положительным числом");
+      setError("Ставка должна быть положительным числом.");
       return;
     }
     try {
@@ -123,6 +151,55 @@ export const TariffsPage: React.FC = () => {
       });
     } catch (err) {
       setError(getApiErrorMessage(err, "Ошибка сохранения тарифа."));
+    }
+  };
+
+  const openEditDialog = (t: Tariff) => {
+    setEditingTariffId(t.id);
+    setEditTariff({
+      name: t.name,
+      rate: String(t.rate),
+      category: t.category,
+      is_active: t.is_active,
+      min_area: t.min_area == null ? "" : String(t.min_area),
+      max_area: t.max_area == null ? "" : String(t.max_area),
+      is_elevator_required:
+        t.is_elevator_required == null ? "" : String(t.is_elevator_required),
+      is_gas_required: t.is_gas_required == null ? "" : String(t.is_gas_required),
+      min_floors: t.min_floors == null ? "" : String(t.min_floors),
+    });
+    setEditOpen(true);
+  };
+
+  const saveTariffEdit = async () => {
+    if (!editingTariffId) return;
+    const rate = Number(editTariff.rate);
+    if (!editTariff.name.trim() || !Number.isFinite(rate) || rate <= 0) {
+      setError("Заполните наименование и корректную ставку.");
+      return;
+    }
+    const payload: any = {
+      name: editTariff.name.trim(),
+      rate,
+      category: editTariff.category,
+      is_active: editTariff.is_active,
+      min_area: editTariff.min_area === "" ? null : Number(editTariff.min_area),
+      max_area: editTariff.max_area === "" ? null : Number(editTariff.max_area),
+      min_floors: editTariff.min_floors === "" ? null : Number(editTariff.min_floors),
+      is_elevator_required:
+        editTariff.is_elevator_required === ""
+          ? null
+          : editTariff.is_elevator_required === "true",
+      is_gas_required:
+        editTariff.is_gas_required === "" ? null : editTariff.is_gas_required === "true",
+    };
+    try {
+      await api.patch(`/tariffs/${editingTariffId}`, payload);
+      setEditOpen(false);
+      setEditingTariffId(null);
+      await loadTariffs(selectedCityId || undefined);
+    } catch (err) {
+      setError(getApiErrorMessage(err, "Ошибка редактирования тарифа."));
     }
   };
 
@@ -156,8 +233,9 @@ export const TariffsPage: React.FC = () => {
           ))}
         </TextField>
         <Button
-          variant="outlined"
+          variant="contained"
           size="small"
+          startIcon={<RefreshIcon />}
           onClick={() => void loadTariffs(selectedCityId || undefined)}
           disabled={loading}
         >
@@ -181,7 +259,7 @@ export const TariffsPage: React.FC = () => {
           </Typography>
           <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2 }}>
             <TextField
-              label="№ п/п (item_number)"
+              label="№ пункта"
               value={newTariff.item_number}
               onChange={(e) => setNewTariff((p) => ({ ...p, item_number: e.target.value }))}
             />
@@ -218,12 +296,12 @@ export const TariffsPage: React.FC = () => {
               sx={{ gridColumn: "1 / 3" }}
             />
             <TextField
-              label="min_area (опц.)"
+              label="Мин. площадь, м² (опц.)"
               value={newTariff.min_area}
               onChange={(e) => setNewTariff((p) => ({ ...p, min_area: e.target.value }))}
             />
             <TextField
-              label="max_area (опц.)"
+              label="Макс. площадь, м² (опц.)"
               value={newTariff.max_area}
               onChange={(e) => setNewTariff((p) => ({ ...p, max_area: e.target.value }))}
             />
@@ -252,7 +330,7 @@ export const TariffsPage: React.FC = () => {
               <MenuItem value="false">Нет</MenuItem>
             </TextField>
             <TextField
-              label="min_floors (опц.)"
+              label="Мин. этажность (опц.)"
               value={newTariff.min_floors}
               onChange={(e) => setNewTariff((p) => ({ ...p, min_floors: e.target.value }))}
             />
@@ -267,7 +345,7 @@ export const TariffsPage: React.FC = () => {
               try {
                 const rate = Number(newTariff.rate);
                 if (!newTariff.item_number.trim() || !newTariff.name.trim() || !Number.isFinite(rate) || rate <= 0) {
-                  alert("Заполни № п/п, наименование и корректную ставку");
+                  setError("Заполните № пункта, наименование и корректную ставку.");
                   return;
                 }
                 const payload: any = {
@@ -308,6 +386,92 @@ export const TariffsPage: React.FC = () => {
         </DialogActions>
       </Dialog>
 
+      <Dialog open={editOpen} onClose={() => setEditOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Редактировать тариф</DialogTitle>
+        <DialogContent sx={{ pt: 1 }}>
+          <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2 }}>
+            <TextField
+              select
+              label="Категория"
+              value={editTariff.category}
+              onChange={(e) => setEditTariff((p) => ({ ...p, category: e.target.value }))}
+            >
+              <MenuItem value="maintenance">Содержание</MenuItem>
+              <MenuItem value="repair">Текущий ремонт</MenuItem>
+              <MenuItem value="management">Управление</MenuItem>
+            </TextField>
+            <TextField
+              select
+              label="Активен"
+              value={String(editTariff.is_active)}
+              onChange={(e) =>
+                setEditTariff((p) => ({ ...p, is_active: e.target.value === "true" }))
+              }
+            >
+              <MenuItem value="true">Да</MenuItem>
+              <MenuItem value="false">Нет</MenuItem>
+            </TextField>
+            <TextField
+              label="Ставка, руб./м²"
+              value={editTariff.rate}
+              onChange={(e) => setEditTariff((p) => ({ ...p, rate: e.target.value }))}
+            />
+            <TextField
+              label="Наименование"
+              value={editTariff.name}
+              onChange={(e) => setEditTariff((p) => ({ ...p, name: e.target.value }))}
+            />
+            <TextField
+              label="Мин. площадь, м² (опц.)"
+              value={editTariff.min_area}
+              onChange={(e) => setEditTariff((p) => ({ ...p, min_area: e.target.value }))}
+            />
+            <TextField
+              label="Макс. площадь, м² (опц.)"
+              value={editTariff.max_area}
+              onChange={(e) => setEditTariff((p) => ({ ...p, max_area: e.target.value }))}
+            />
+            <TextField
+              select
+              label="Требует лифт (опц.)"
+              value={editTariff.is_elevator_required}
+              onChange={(e) =>
+                setEditTariff((p) => ({ ...p, is_elevator_required: e.target.value }))
+              }
+            >
+              <MenuItem value="">—</MenuItem>
+              <MenuItem value="true">Да</MenuItem>
+              <MenuItem value="false">Нет</MenuItem>
+            </TextField>
+            <TextField
+              select
+              label="Требует газ (опц.)"
+              value={editTariff.is_gas_required}
+              onChange={(e) =>
+                setEditTariff((p) => ({ ...p, is_gas_required: e.target.value }))
+              }
+            >
+              <MenuItem value="">—</MenuItem>
+              <MenuItem value="true">Да</MenuItem>
+              <MenuItem value="false">Нет</MenuItem>
+            </TextField>
+            <TextField
+              label="Мин. этажность (опц.)"
+              value={editTariff.min_floors}
+              onChange={(e) => setEditTariff((p) => ({ ...p, min_floors: e.target.value }))}
+            />
+          </Box>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button variant="outlined" color="inherit" onClick={() => setEditOpen(false)}>
+            Отмена
+          </Button>
+          <Button onClick={() => void saveTariffEdit()} startIcon={<SaveIcon />}>
+            Сохранить
+          </Button>
+        </DialogActions>
+      </Dialog>
+
       <TableContainer
         component={Paper}
         sx={{
@@ -319,7 +483,6 @@ export const TariffsPage: React.FC = () => {
         <Table stickyHeader size="small">
           <TableHead>
             <TableRow>
-              <TableCell>ID</TableCell>
               <TableCell>№ п/п</TableCell>
               <TableCell>Вид работ</TableCell>
               <TableCell>Категория</TableCell>
@@ -331,10 +494,9 @@ export const TariffsPage: React.FC = () => {
           <TableBody>
             {tariffs.map((t) => (
               <TableRow key={t.id} hover>
-                <TableCell>{t.id}</TableCell>
                 <TableCell>{t.item_number}</TableCell>
                 <TableCell>{t.name}</TableCell>
-                <TableCell>{t.category}</TableCell>
+                <TableCell>{categoryLabel(t.category)}</TableCell>
                 <TableCell align="right" sx={{ minWidth: 120 }}>
                   <TextField
                     type="number"
@@ -346,8 +508,16 @@ export const TariffsPage: React.FC = () => {
                 </TableCell>
                 <TableCell align="center">{t.is_active ? "Да" : "Нет"}</TableCell>
                 <TableCell align="center">
-                  <IconButton color="primary" onClick={() => handleSaveRate(t)} size="small">
+                  <IconButton color="primary" onClick={() => handleSaveRate(t)} size="small" title="Сохранить ставку">
                     <SaveIcon fontSize="small" />
+                  </IconButton>
+                  <IconButton
+                    color="primary"
+                    onClick={() => openEditDialog(t)}
+                    size="small"
+                    title="Редактировать тариф"
+                  >
+                    <EditIcon fontSize="small" />
                   </IconButton>
                 </TableCell>
               </TableRow>

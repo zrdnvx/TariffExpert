@@ -21,10 +21,10 @@ import {
 
 type DetailFormState = {
   address: string;
-  total_area: number;
-  floors_count: number;
+  total_area: number | "";
+  floors_count: number | "";
   year_built: number | "";
-  existing_rate: number;
+  existing_rate: number | "";
   has_cws: boolean;
   has_hws: boolean;
   has_sewerage: boolean;
@@ -59,10 +59,10 @@ export const DetailCalculationPage: React.FC = () => {
   const api = useApiClient();
   const [form, setForm] = useState<DetailFormState>({
     address: "",
-    total_area: 0,
-    floors_count: 1,
+    total_area: "",
+    floors_count: "",
     year_built: "",
-    existing_rate: 0,
+    existing_rate: "",
     has_cws: true,
     has_hws: false,
     has_sewerage: true,
@@ -80,6 +80,12 @@ export const DetailCalculationPage: React.FC = () => {
   const [result, setResult] = useState<DetailResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState<{
+    address?: boolean;
+    total_area?: boolean;
+    floors_count?: boolean;
+    existing_rate?: boolean;
+  }>({});
 
   const handleChange = (field: keyof DetailFormState, value: any) => {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -91,8 +97,25 @@ export const DetailCalculationPage: React.FC = () => {
     setError(null);
     setResult(null);
     try {
+      const totalArea = Number(form.total_area);
+      const floorsCount = Number(form.floors_count);
+      const existingRate = Number(form.existing_rate);
+      const nextErrors = {
+        address: !form.address.trim(),
+        total_area: !Number.isFinite(totalArea) || totalArea <= 0,
+        floors_count: !Number.isFinite(floorsCount) || floorsCount <= 0,
+        existing_rate: !Number.isFinite(existingRate) || existingRate <= 0,
+      };
+      setFieldErrors(nextErrors);
+      if (nextErrors.address || nextErrors.total_area || nextErrors.floors_count || nextErrors.existing_rate) {
+        setError("Заполните обязательные поля: адрес, площадь, этажность и имеющуюся плату.");
+        return;
+      }
       const payload = {
         ...form,
+        total_area: totalArea,
+        floors_count: floorsCount,
+        existing_rate: existingRate,
         year_built: form.year_built === "" ? null : form.year_built,
         fias_id: null,
         has_boiler: false,
@@ -126,7 +149,6 @@ export const DetailCalculationPage: React.FC = () => {
           mb: 3,
           maxWidth: 960,
           border: "1px solid rgba(148,163,184,0.3)",
-          background: "linear-gradient(135deg, rgba(15,23,42,0.9), rgba(15,23,42,0.6))",
         }}
       >
         <Grid container spacing={2}>
@@ -134,34 +156,50 @@ export const DetailCalculationPage: React.FC = () => {
             <TextField
               label="Адрес"
               value={form.address}
-              onChange={(e) => handleChange("address", e.target.value)}
+              onChange={(e) => {
+                handleChange("address", e.target.value);
+                setFieldErrors((prev) => ({ ...prev, address: false }));
+              }}
               required
+              error={Boolean(fieldErrors.address)}
+              helperText={fieldErrors.address ? "Введите адрес." : ""}
             />
           </Grid>
           <Grid item xs={12} md={3}>
             <TextField
               label="Общая площадь, м²"
               type="number"
+              placeholder="Например: 12345.67"
               inputProps={{ min: 0, step: 0.01 }}
               value={form.total_area}
-              onChange={(e) => handleChange("total_area", Number(e.target.value))}
+              onChange={(e) =>
+                handleChange("total_area", e.target.value === "" ? "" : Number(e.target.value))
+              }
               required
+              error={Boolean(fieldErrors.total_area)}
+              helperText={fieldErrors.total_area ? "Введите площадь больше 0." : ""}
             />
           </Grid>
           <Grid item xs={12} md={3}>
             <TextField
               label="Этажность"
               type="number"
+              placeholder="Например: 9"
               inputProps={{ min: 1 }}
               value={form.floors_count}
-              onChange={(e) => handleChange("floors_count", Number(e.target.value))}
+              onChange={(e) =>
+                handleChange("floors_count", e.target.value === "" ? "" : Number(e.target.value))
+              }
               required
+              error={Boolean(fieldErrors.floors_count)}
+              helperText={fieldErrors.floors_count ? "Введите этажность больше 0." : ""}
             />
           </Grid>
           <Grid item xs={12} md={3}>
             <TextField
               label="Год ввода"
               type="number"
+              placeholder="Например: 1985"
               value={form.year_built}
               onChange={(e) =>
                 handleChange("year_built", e.target.value === "" ? "" : Number(e.target.value))
@@ -172,10 +210,15 @@ export const DetailCalculationPage: React.FC = () => {
             <TextField
               label="Имеющаяся плата, руб./м²"
               type="number"
+              placeholder="Например: 32.50"
               inputProps={{ min: 0, step: 0.01 }}
               value={form.existing_rate}
-              onChange={(e) => handleChange("existing_rate", Number(e.target.value))}
+              onChange={(e) =>
+                handleChange("existing_rate", e.target.value === "" ? "" : Number(e.target.value))
+              }
               required
+              error={Boolean(fieldErrors.existing_rate)}
+              helperText={fieldErrors.existing_rate ? "Введите плату больше 0." : ""}
             />
           </Grid>
         </Grid>
@@ -359,7 +402,6 @@ export const DetailCalculationPage: React.FC = () => {
               p: 3,
               mb: 2,
               border: "1px solid rgba(148,163,184,0.3)",
-              background: "linear-gradient(135deg, rgba(15,23,42,0.95), rgba(15,23,42,0.7))",
             }}
           >
             <Typography variant="subtitle1" sx={{ mb: 1 }}>

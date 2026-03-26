@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import axios from "axios";
+import { API_BASE_URL } from "../api/config";
 import {
   Box,
   Button,
@@ -11,9 +12,6 @@ import {
   Divider,
   Stack,
 } from "@mui/material";
-
-const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000/api/v1";
 
 type City = {
   id: string;
@@ -169,7 +167,6 @@ export const AdminSetupPage: React.FC = () => {
           mb: 3,
           maxWidth: 480,
           border: "1px solid rgba(148,163,184,0.3)",
-          background: "linear-gradient(145deg, #020617, #0b1120)",
         }}
       >
         <Typography variant="subtitle1" sx={{ mb: 1 }}>
@@ -206,7 +203,6 @@ export const AdminSetupPage: React.FC = () => {
               sx={{
                 p: 3,
                 border: "1px solid rgba(148,163,184,0.3)",
-                background: "linear-gradient(135deg, rgba(15,23,42,0.9), rgba(15,23,42,0.6))",
               }}
             >
               <Typography variant="subtitle1" sx={{ mb: 1 }}>
@@ -249,7 +245,6 @@ export const AdminSetupPage: React.FC = () => {
               sx={{
                 p: 3,
                 border: "1px solid rgba(148,163,184,0.3)",
-                background: "linear-gradient(135deg, rgba(15,23,42,0.9), rgba(15,23,42,0.6))",
               }}
             >
               <Typography variant="subtitle1" sx={{ mb: 1 }}>
@@ -309,7 +304,6 @@ export const AdminSetupPage: React.FC = () => {
               sx={{
                 p: 3,
                 border: "1px solid rgba(148,163,184,0.3)",
-                background: "linear-gradient(135deg, rgba(15,23,42,0.9), rgba(15,23,42,0.6))",
               }}
             >
               <Typography variant="subtitle1" sx={{ mb: 1 }}>

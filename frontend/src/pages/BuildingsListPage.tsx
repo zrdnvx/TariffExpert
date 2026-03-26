@@ -26,6 +26,10 @@ import {
 } from "@mui/material";
 import CalculateIcon from "@mui/icons-material/Calculate";
 import AddIcon from "@mui/icons-material/Add";
+import EditIcon from "@mui/icons-material/Edit";
+import SaveIcon from "@mui/icons-material/Save";
+import DeleteIcon from "@mui/icons-material/Delete";
+import RefreshIcon from "@mui/icons-material/Refresh";
 
 type Building = {
   id: string;
@@ -61,12 +65,15 @@ export const BuildingsListPage: React.FC = () => {
   const [detailOpen, setDetailOpen] = useState(false);
   const [selected, setSelected] = useState<Building | null>(null);
 
+  const [editOpen, setEditOpen] = useState(false);
+  const [savingEdit, setSavingEdit] = useState(false);
+
   const [addOpen, setAddOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   type BuildingCreateForm = {
     address: string;
-    total_area: number;
-    floors_count: number;
+    total_area: number | "";
+    floors_count: number | "";
     year_built: number | "";
     has_cws: boolean;
     has_hws: boolean;
@@ -83,11 +90,12 @@ export const BuildingsListPage: React.FC = () => {
     has_sandbox_service: boolean;
     has_icicle_removal: boolean;
   };
+  type BuildingFormKey = keyof BuildingCreateForm;
 
   const [form, setForm] = useState<BuildingCreateForm>({
     address: "",
-    total_area: 0,
-    floors_count: 1,
+    total_area: "",
+    floors_count: "",
     year_built: "",
     has_cws: true,
     has_hws: false,
@@ -104,6 +112,18 @@ export const BuildingsListPage: React.FC = () => {
     has_sandbox_service: false,
     has_icicle_removal: false,
   });
+  const [formErrors, setFormErrors] = useState<{
+    address?: boolean;
+    total_area?: boolean;
+    floors_count?: boolean;
+  }>({});
+
+  const [editForm, setEditForm] = useState<BuildingCreateForm | null>(null);
+  const [editFormErrors, setEditFormErrors] = useState<{
+    address?: boolean;
+    total_area?: boolean;
+    floors_count?: boolean;
+  }>({});
 
   const loadBuildings = async () => {
     setLoading(true);
@@ -126,6 +146,81 @@ export const BuildingsListPage: React.FC = () => {
     navigate(`/calculations/run?buildingId=${id}`);
   };
 
+  const openEdit = () => {
+    if (!selected) return;
+    setEditForm({
+      address: selected.address,
+      total_area: Number(selected.total_area),
+      floors_count: selected.floors_count,
+      year_built: selected.year_built ?? "",
+      has_cws: selected.has_cws,
+      has_hws: selected.has_hws,
+      has_sewerage: selected.has_sewerage,
+      has_gas: selected.has_gas,
+      has_elevator: selected.has_elevator,
+      has_trash_chute: selected.has_trash_chute,
+      has_fire_alarm: selected.has_fire_alarm,
+      has_local_boiler: selected.has_local_boiler,
+      has_recirculation_pumps: selected.has_recirculation_pumps,
+      has_askue: selected.has_askue,
+      has_cleaning_stairs: selected.has_cleaning_stairs,
+      has_trees_maintenance: selected.has_trees_maintenance,
+      has_sandbox_service: selected.has_sandbox_service,
+      has_icicle_removal: selected.has_icicle_removal,
+    });
+    setEditOpen(true);
+    setEditFormErrors({});
+  };
+
+  const saveEdit = async () => {
+    if (!selected || !editForm) return;
+    setSavingEdit(true);
+    setError(null);
+    try {
+      const totalArea = Number(editForm.total_area);
+      const floorsCount = Number(editForm.floors_count);
+      const nextErrors = {
+        address: !editForm.address.trim(),
+        total_area: !Number.isFinite(totalArea) || totalArea <= 0,
+        floors_count: !Number.isFinite(floorsCount) || floorsCount <= 0,
+      };
+      setEditFormErrors(nextErrors);
+      if (nextErrors.address || nextErrors.total_area || nextErrors.floors_count) {
+        setError("Заполните обязательные поля: адрес, площадь и этажность.");
+        return;
+      }
+      const payload = {
+        ...editForm,
+        total_area: totalArea,
+        floors_count: floorsCount,
+        year_built: editForm.year_built === "" ? null : editForm.year_built,
+      };
+      const res = await api.patch<Building>(`/buildings/${selected.id}`, payload);
+      // обновить выбранный и список
+      setSelected(res.data);
+      setItems((prev) => prev.map((b) => (b.id === res.data.id ? res.data : b)));
+      setEditOpen(false);
+    } catch (e) {
+      setError(getApiErrorMessage(e, "Ошибка сохранения дома."));
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  const deleteBuilding = async () => {
+    if (!selected) return;
+    const ok = window.confirm("Удалить этот дом и все его расчеты? Действие нельзя отменить.");
+    if (!ok) return;
+    try {
+      await api.delete(`/buildings/${selected.id}`);
+      setItems((prev) => prev.filter((b) => b.id !== selected.id));
+      setDetailOpen(false);
+      setSelected(null);
+    } catch (e) {
+      setError(getApiErrorMessage(e, "Не удалось удалить дом."));
+    }
+  };
+
   return (
     <Box>
       <Typography variant="h5" sx={{ mb: 1, fontWeight: 600 }}>
@@ -136,7 +231,13 @@ export const BuildingsListPage: React.FC = () => {
         расчету платы по каждому дому.
       </Typography>
       <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap" }}>
-        <Button variant="outlined" size="small" onClick={loadBuildings} disabled={loading}>
+        <Button
+          variant="contained"
+          size="small"
+          startIcon={<RefreshIcon />}
+          onClick={loadBuildings}
+          disabled={loading}
+        >
           Обновить
         </Button>
         <Button size="small" startIcon={<AddIcon />} onClick={() => setAddOpen(true)}>
@@ -160,31 +261,53 @@ export const BuildingsListPage: React.FC = () => {
               <TextField
                 label="Адрес"
                 value={form.address}
-                  onChange={(e) => setForm((p) => ({ ...p, address: e.target.value }))}
+                onChange={(e) => {
+                  setForm((p) => ({ ...p, address: e.target.value }));
+                  setFormErrors((prev) => ({ ...prev, address: false }));
+                }}
+                error={Boolean(formErrors.address)}
+                helperText={formErrors.address ? "Введите адрес." : ""}
               />
             </Grid>
             <Grid item xs={12} md={3}>
               <TextField
                 label="Общая площадь, м²"
                 type="number"
+                placeholder="Например: 12345.67"
                 inputProps={{ min: 0, step: 0.01 }}
                 value={form.total_area}
-                  onChange={(e) => setForm((p) => ({ ...p, total_area: Number(e.target.value) }))}
+                onChange={(e) =>
+                  setForm((p) => ({
+                    ...p,
+                    total_area: e.target.value === "" ? "" : Number(e.target.value),
+                  }))
+                }
+                error={Boolean(formErrors.total_area)}
+                helperText={formErrors.total_area ? "Введите площадь больше 0." : ""}
               />
             </Grid>
             <Grid item xs={12} md={3}>
               <TextField
                 label="Этажность"
                 type="number"
+                placeholder="Например: 9"
                 inputProps={{ min: 1 }}
                 value={form.floors_count}
-                  onChange={(e) => setForm((p) => ({ ...p, floors_count: Number(e.target.value) }))}
+                onChange={(e) =>
+                  setForm((p) => ({
+                    ...p,
+                    floors_count: e.target.value === "" ? "" : Number(e.target.value),
+                  }))
+                }
+                error={Boolean(formErrors.floors_count)}
+                helperText={formErrors.floors_count ? "Введите этажность больше 0." : ""}
               />
             </Grid>
             <Grid item xs={12} md={3}>
               <TextField
                 label="Год ввода"
                 type="number"
+                placeholder="Например: 1985"
                 value={form.year_built}
                 onChange={(e) =>
                     setForm((p) => ({ ...p, year_built: e.target.value === "" ? "" : Number(e.target.value) }))
@@ -258,8 +381,22 @@ export const BuildingsListPage: React.FC = () => {
             onClick={async () => {
               try {
                 setCreating(true);
+                const totalArea = Number(form.total_area);
+                const floorsCount = Number(form.floors_count);
+                const nextErrors = {
+                  address: !form.address.trim(),
+                  total_area: !Number.isFinite(totalArea) || totalArea <= 0,
+                  floors_count: !Number.isFinite(floorsCount) || floorsCount <= 0,
+                };
+                setFormErrors(nextErrors);
+                if (nextErrors.address || nextErrors.total_area || nextErrors.floors_count) {
+                  setError("Заполните обязательные поля: адрес, площадь и этажность.");
+                  return;
+                }
                 const payload = {
                   ...form,
+                  total_area: totalArea,
+                  floors_count: floorsCount,
                   year_built: form.year_built === "" ? null : form.year_built,
                   fias_id: null,
                   has_central_heating: true,
@@ -348,9 +485,11 @@ export const BuildingsListPage: React.FC = () => {
                 <Typography variant="body2">
                   <strong>Адрес:</strong> {selected.address}
                 </Typography>
-                <Typography variant="body2">
-                  <strong>FIAS ID:</strong> {selected.fias_id ?? "—"}
-                </Typography>
+                {selected.fias_id ? (
+                  <Typography variant="body2">
+                    <strong>Код ФИАС:</strong> {selected.fias_id}
+                  </Typography>
+                ) : null}
                 <Typography variant="body2">
                   <strong>Общая площадь:</strong> {Number(selected.total_area)} м²
                 </Typography>
@@ -416,7 +555,178 @@ export const BuildingsListPage: React.FC = () => {
           )}
         </DialogContent>
         <DialogActions>
+          <Button
+            startIcon={<EditIcon />}
+            onClick={() => {
+              openEdit();
+            }}
+            disabled={!selected}
+          >
+            Редактировать
+          </Button>
+          <Button color="error" startIcon={<DeleteIcon />} onClick={() => void deleteBuilding()}>
+            Удалить дом
+          </Button>
           <Button onClick={() => setDetailOpen(false)}>Закрыть</Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog
+        open={editOpen && !!editForm}
+        onClose={() => setEditOpen(false)}
+        maxWidth="md"
+        fullWidth
+      >
+        <DialogTitle>Редактирование дома</DialogTitle>
+        <DialogContent>
+          {editForm && (
+            <>
+              <Grid container spacing={2} sx={{ mt: 0.5 }}>
+                <Grid item xs={12} md={6}>
+                  <TextField
+                    label="Адрес"
+                    value={editForm.address}
+                    onChange={(e) => {
+                      setEditForm((p) => (p ? { ...p, address: e.target.value } : p));
+                      setEditFormErrors((prev) => ({ ...prev, address: false }));
+                    }}
+                    required
+                    error={Boolean(editFormErrors.address)}
+                    helperText={editFormErrors.address ? "Введите адрес." : ""}
+                  />
+                </Grid>
+                <Grid item xs={12} md={3}>
+                  <TextField
+                    label="Общая площадь, м²"
+                    type="number"
+                    placeholder="Например: 12345.67"
+                    inputProps={{ min: 0, step: 0.01 }}
+                    value={editForm.total_area}
+                    onChange={(e) =>
+                      setEditForm((p) =>
+                        p
+                          ? { ...p, total_area: e.target.value === "" ? "" : Number(e.target.value) }
+                          : p,
+                      )
+                    }
+                    required
+                    error={Boolean(editFormErrors.total_area)}
+                    helperText={editFormErrors.total_area ? "Введите площадь больше 0." : ""}
+                  />
+                </Grid>
+                <Grid item xs={12} md={3}>
+                  <TextField
+                    label="Этажность"
+                    type="number"
+                    placeholder="Например: 9"
+                    inputProps={{ min: 1 }}
+                    value={editForm.floors_count}
+                    onChange={(e) =>
+                      setEditForm((p) =>
+                        p
+                          ? { ...p, floors_count: e.target.value === "" ? "" : Number(e.target.value) }
+                          : p,
+                      )
+                    }
+                    required
+                    error={Boolean(editFormErrors.floors_count)}
+                    helperText={editFormErrors.floors_count ? "Введите этажность больше 0." : ""}
+                  />
+                </Grid>
+                <Grid item xs={12} md={3}>
+                  <TextField
+                    label="Год ввода"
+                    type="number"
+                    placeholder="Например: 1985"
+                    value={editForm.year_built}
+                    onChange={(e) =>
+                      setEditForm((p) =>
+                        p
+                          ? { ...p, year_built: e.target.value === "" ? "" : Number(e.target.value) }
+                          : p,
+                      )
+                    }
+                  />
+                </Grid>
+              </Grid>
+
+              <Divider sx={{ my: 2 }} />
+              <Typography variant="subtitle1" sx={{ mb: 1 }}>
+                Инженерные системы
+              </Typography>
+              <Grid container spacing={1}>
+                {[
+                  ["has_cws", "Холодное водоснабжение"],
+                  ["has_hws", "Горячее водоснабжение"],
+                  ["has_sewerage", "Канализация"],
+                  ["has_gas", "Газ"],
+                  ["has_elevator", "Лифты"],
+                  ["has_trash_chute", "Мусоропровод"],
+                  ["has_fire_alarm", "Пожарная сигнализация"],
+                  ["has_local_boiler", "Локальная котельная"],
+                  ["has_recirculation_pumps", "Рециркуляционные насосы ГВС"],
+                  ["has_askue", "АСКУЭ / узлы учета"],
+                  ["has_cleaning_stairs", "Уборка лестничных клеток"],
+                ].map(([key, label]) => (
+                  <Grid item xs={12} sm={6} md={4} key={key}>
+                    <FormControlLabel
+                      control={
+                        <Checkbox
+                          checked={Boolean(editForm[key as BuildingFormKey])}
+                          onChange={(e) =>
+                            setEditForm((p) =>
+                              p ? ({ ...p, [key]: e.target.checked } as BuildingCreateForm) : p,
+                            )
+                          }
+                        />
+                      }
+                      label={label}
+                    />
+                  </Grid>
+                ))}
+              </Grid>
+
+              <Divider sx={{ my: 2 }} />
+              <Typography variant="subtitle1" sx={{ mb: 1 }}>
+                Благоустройство
+              </Typography>
+              <Grid container spacing={1}>
+                {[
+                  ["has_trees_maintenance", "Снос аварийных деревьев (2.4.6)"],
+                  ["has_sandbox_service", "Замена песка в песочницах (2.4.8)"],
+                  ["has_icicle_removal", "Удаление наледей и сосулек (2.4.9)"],
+                ].map(([key, label]) => (
+                  <Grid item xs={12} sm={6} md={4} key={key}>
+                    <FormControlLabel
+                      control={
+                        <Checkbox
+                          checked={Boolean(editForm[key as BuildingFormKey])}
+                          onChange={(e) =>
+                            setEditForm((p) =>
+                              p ? ({ ...p, [key]: e.target.checked } as BuildingCreateForm) : p,
+                            )
+                          }
+                        />
+                      }
+                      label={label}
+                    />
+                  </Grid>
+                ))}
+              </Grid>
+            </>
+          )}
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button variant="outlined" color="inherit" onClick={() => setEditOpen(false)}>
+            Отмена
+          </Button>
+          <Button
+            onClick={() => void saveEdit()}
+            disabled={savingEdit || !editForm?.address}
+            startIcon={<SaveIcon />}
+          >
+            {savingEdit ? "Сохраняем..." : "Сохранить"}
+          </Button>
         </DialogActions>
       </Dialog>
     </Box>
