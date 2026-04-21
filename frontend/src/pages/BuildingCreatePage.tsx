@@ -5,9 +5,13 @@ import {
   Box,
   Button,
   Checkbox,
+  FormControl,
   FormControlLabel,
+  InputLabel,
   Grid,
+  MenuItem,
   Paper,
+  Select,
   TextField,
   Typography,
   Divider,
@@ -31,6 +35,8 @@ type BuildingFormState = {
   has_trees_maintenance: boolean;
   has_sandbox_service: boolean;
   has_icicle_removal: boolean;
+  is_apartment_building: boolean;
+  house_type: "monolith_brick" | "reinforced_concrete" | "other_low_capital";
 };
 
 export const BuildingCreatePage: React.FC = () => {
@@ -53,6 +59,8 @@ export const BuildingCreatePage: React.FC = () => {
     has_trees_maintenance: false,
     has_sandbox_service: false,
     has_icicle_removal: false,
+    is_apartment_building: true,
+    house_type: "monolith_brick",
   });
 
   const [resultId, setResultId] = useState<string | null>(null);
@@ -95,6 +103,7 @@ export const BuildingCreatePage: React.FC = () => {
         has_boiler: false,
         has_central_heating: true,
         has_cleaning_stairs: true,
+        house_type: form.is_apartment_building ? form.house_type : null,
       };
       const res = await api.post("/buildings/", payload);
       setResultId(res.data.id);
@@ -178,6 +187,45 @@ export const BuildingCreatePage: React.FC = () => {
               }
             />
           </Grid>
+          <Grid item xs={12} md={3}>
+            <FormControl fullWidth>
+              <InputLabel id="mkd-type-label">Тип объекта</InputLabel>
+              <Select
+                labelId="mkd-type-label"
+                label="Тип объекта"
+                value={form.is_apartment_building ? "mkd" : "other"}
+                onChange={(e) =>
+                  handleChange("is_apartment_building", e.target.value === "mkd")
+                }
+              >
+                <MenuItem value="mkd">Многоквартирный дом</MenuItem>
+                <MenuItem value="other">Прочий объект (склад и т.д.)</MenuItem>
+              </Select>
+            </FormControl>
+          </Grid>
+          {form.is_apartment_building && (
+            <Grid item xs={12} md={6}>
+              <FormControl fullWidth>
+                <InputLabel id="house-type-label">Тип многоквартирного дома (К1)</InputLabel>
+                <Select
+                  labelId="house-type-label"
+                  label="Тип многоквартирного дома (К1)"
+                  value={form.house_type}
+                  onChange={(e) => handleChange("house_type", e.target.value)}
+                >
+                  <MenuItem value="monolith_brick">
+                    Монолитные/кирпичные стены (К1 = 1.00)
+                  </MenuItem>
+                  <MenuItem value="reinforced_concrete">
+                    Железобетонные стены (К1 = 1.25)
+                  </MenuItem>
+                  <MenuItem value="other_low_capital">
+                    Пониженная капитальность, прочие материалы (К1 = 1.50)
+                  </MenuItem>
+                </Select>
+              </FormControl>
+            </Grid>
+          )}
         </Grid>
 
         <Divider sx={{ my: 3 }} />

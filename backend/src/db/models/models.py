@@ -25,6 +25,17 @@ class TariffCategory(str, enum.Enum):
     MANAGEMENT = "management"  # 3. Плата за управление
 
 
+class HouseType(str, enum.Enum):
+    MONOLITH_BRICK = "monolith_brick"
+    REINFORCED_CONCRETE = "reinforced_concrete"
+    OTHER_LOW_CAPITAL = "other_low_capital"
+
+
+class CoefficientKind(str, enum.Enum):
+    K1 = "k1"
+    K2 = "k2"
+
+
 class ReferenceTariff(Base):
     """
     Справочник тарифов из Постановления №75.
@@ -52,6 +63,28 @@ class ReferenceTariff(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
     city: Mapped["City"] = relationship()
+
+
+class ReferenceCoefficient(Base):
+    """
+    Справочник коэффициентов (К1/К2).
+    NULL organization_id -> базовый городской, NOT NULL -> коэффициент организации.
+    """
+    __tablename__ = "reference_coefficients"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    city_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("cities.id"), index=True)
+    organization_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("organizations.id"), index=True, nullable=True
+    )
+    kind: Mapped[CoefficientKind] = mapped_column(Enum(CoefficientKind))
+    code: Mapped[str] = mapped_column(String(50), index=True)
+    name: Mapped[str] = mapped_column(Text)
+    value: Mapped[Decimal] = mapped_column(Numeric(8, 4))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    city: Mapped["City"] = relationship()
+    organization: Mapped[Optional["Organization"]] = relationship()
 
 
 class City(Base):
@@ -122,6 +155,10 @@ class Building(Base):
     total_area: Mapped[Decimal] = mapped_column(Numeric(12, 2))
     floors_count: Mapped[int] = mapped_column(Integer)
     year_built: Mapped[Optional[int]] = mapped_column(Integer)
+    is_apartment_building: Mapped[bool] = mapped_column(Boolean, default=True)
+    house_type: Mapped[Optional[HouseType]] = mapped_column(
+        Enum(HouseType), nullable=True
+    )
 
     # Инженерные системы (Обновлено под схему)
     has_cws: Mapped[bool] = mapped_column(Boolean, default=True)

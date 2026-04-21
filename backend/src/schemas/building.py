@@ -2,6 +2,7 @@ from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional
 from decimal import Decimal
 from uuid import UUID
+from src.db.models.models import HouseType
 
 
 class BuildingBase(BaseModel):
@@ -10,6 +11,8 @@ class BuildingBase(BaseModel):
     total_area: Decimal = Field(..., gt=0)
     floors_count: int = Field(..., gt=0)
     year_built: Optional[int] = None
+    is_apartment_building: bool = True
+    house_type: Optional[HouseType] = HouseType.MONOLITH_BRICK
 
     # Флаги инженерных систем из ТЗ
     has_cws: bool = True
@@ -41,6 +44,8 @@ class BuildingUpdate(BaseModel):
     total_area: Optional[Decimal] = Field(None, gt=0)
     floors_count: Optional[int] = Field(None, gt=0)
     year_built: Optional[int] = None
+    is_apartment_building: Optional[bool] = None
+    house_type: Optional[HouseType] = None
 
     has_cws: Optional[bool] = None
     has_hws: Optional[bool] = None

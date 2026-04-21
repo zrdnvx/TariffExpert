@@ -30,6 +30,8 @@ type CalculationItem = {
   item_number: string;
   name: string;
   applied_rate: string;
+  formula_label?: string | null;
+  formula_substitution?: string | null;
 };
 
 type CalculationResult = {
@@ -215,6 +217,7 @@ export const CalculationRunPage: React.FC = () => {
                   <TableCell>№ п/п</TableCell>
                   <TableCell>Вид работ</TableCell>
                   <TableCell align="right">Ставка, руб./м²</TableCell>
+                  <TableCell>Формула</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -223,6 +226,20 @@ export const CalculationRunPage: React.FC = () => {
                     <TableCell>{item.item_number}</TableCell>
                     <TableCell>{item.name}</TableCell>
                     <TableCell align="right">{item.applied_rate}</TableCell>
+                    <TableCell>
+                      {item.formula_label ? (
+                        <>
+                          <Typography variant="caption" sx={{ display: "block", fontWeight: 600 }}>
+                            {item.formula_label}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            {item.formula_substitution}
+                          </Typography>
+                        </>
+                      ) : (
+                        "—"
+                      )}
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>

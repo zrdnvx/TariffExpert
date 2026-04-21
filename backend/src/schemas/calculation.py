@@ -15,6 +15,8 @@ class CalculationItemResponse(BaseModel):
     name: str
     # А это поле возьмет напрямую из CalculationItem
     applied_rate: Decimal = Field(..., alias="applied_rate")
+    formula_label: str | None = None
+    formula_substitution: str | None = None
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 

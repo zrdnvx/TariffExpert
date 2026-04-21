@@ -12,9 +12,13 @@ import {
   Divider,
   Checkbox,
   FormControlLabel,
+  FormControl,
   Grid,
+  InputLabel,
   IconButton,
+  MenuItem,
   Paper,
+  Select,
   Table,
   TableBody,
   TableCell,
@@ -53,6 +57,8 @@ type Building = {
   has_trees_maintenance: boolean;
   has_sandbox_service: boolean;
   has_icicle_removal: boolean;
+  is_apartment_building: boolean;
+  house_type: "monolith_brick" | "reinforced_concrete" | "other_low_capital" | null;
 };
 
 export const BuildingsListPage: React.FC = () => {
@@ -89,6 +95,8 @@ export const BuildingsListPage: React.FC = () => {
     has_trees_maintenance: boolean;
     has_sandbox_service: boolean;
     has_icicle_removal: boolean;
+    is_apartment_building: boolean;
+    house_type: "monolith_brick" | "reinforced_concrete" | "other_low_capital";
   };
   type BuildingFormKey = keyof BuildingCreateForm;
 
@@ -111,6 +119,8 @@ export const BuildingsListPage: React.FC = () => {
     has_trees_maintenance: false,
     has_sandbox_service: false,
     has_icicle_removal: false,
+    is_apartment_building: true,
+    house_type: "monolith_brick",
   });
   const [formErrors, setFormErrors] = useState<{
     address?: boolean;
@@ -167,6 +177,8 @@ export const BuildingsListPage: React.FC = () => {
       has_trees_maintenance: selected.has_trees_maintenance,
       has_sandbox_service: selected.has_sandbox_service,
       has_icicle_removal: selected.has_icicle_removal,
+      is_apartment_building: selected.is_apartment_building,
+      house_type: selected.house_type ?? "monolith_brick",
     });
     setEditOpen(true);
     setEditFormErrors({});
@@ -194,6 +206,7 @@ export const BuildingsListPage: React.FC = () => {
         total_area: totalArea,
         floors_count: floorsCount,
         year_built: editForm.year_built === "" ? null : editForm.year_built,
+        house_type: editForm.is_apartment_building ? editForm.house_type : null,
       };
       const res = await api.patch<Building>(`/buildings/${selected.id}`, payload);
       // обновить выбранный и список
@@ -314,6 +327,41 @@ export const BuildingsListPage: React.FC = () => {
                 }
               />
             </Grid>
+            <Grid item xs={12} md={3}>
+              <FormControl fullWidth>
+                <InputLabel id="building-kind-label">Тип объекта</InputLabel>
+                <Select
+                  labelId="building-kind-label"
+                  label="Тип объекта"
+                  value={form.is_apartment_building ? "mkd" : "other"}
+                  onChange={(e) =>
+                    setForm((p) => ({ ...p, is_apartment_building: e.target.value === "mkd" }))
+                  }
+                >
+                  <MenuItem value="mkd">Многоквартирный дом</MenuItem>
+                  <MenuItem value="other">Прочий объект (склад и т.д.)</MenuItem>
+                </Select>
+              </FormControl>
+            </Grid>
+            {form.is_apartment_building && (
+              <Grid item xs={12} md={6}>
+                <FormControl fullWidth>
+                  <InputLabel id="house-type-add-label">Тип многоквартирного дома (К1)</InputLabel>
+                  <Select
+                    labelId="house-type-add-label"
+                    label="Тип многоквартирного дома (К1)"
+                    value={form.house_type}
+                    onChange={(e) =>
+                      setForm((p) => ({ ...p, house_type: e.target.value as BuildingCreateForm["house_type"] }))
+                    }
+                  >
+                    <MenuItem value="monolith_brick">Монолитные/кирпичные стены (К1 = 1.00)</MenuItem>
+                    <MenuItem value="reinforced_concrete">Железобетонные стены (К1 = 1.25)</MenuItem>
+                    <MenuItem value="other_low_capital">Пониженная капитальность, прочие материалы (К1 = 1.50)</MenuItem>
+                  </Select>
+                </FormControl>
+              </Grid>
+            )}
           </Grid>
 
           <Divider sx={{ my: 2 }} />
@@ -400,6 +448,7 @@ export const BuildingsListPage: React.FC = () => {
                   year_built: form.year_built === "" ? null : form.year_built,
                   fias_id: null,
                   has_central_heating: true,
+                  house_type: form.is_apartment_building ? form.house_type : null,
                 };
                 await api.post("/buildings/", payload);
                 setAddOpen(false);
@@ -499,6 +548,19 @@ export const BuildingsListPage: React.FC = () => {
                 <Typography variant="body2">
                   <strong>Год ввода:</strong> {selected.year_built ?? "—"}
                 </Typography>
+                <Typography variant="body2">
+                  <strong>Тип объекта:</strong> {selected.is_apartment_building ? "Многоквартирный дом" : "Прочий объект"}
+                </Typography>
+                {selected.is_apartment_building && (
+                  <Typography variant="body2">
+                    <strong>Тип дома (К1):</strong>{" "}
+                    {selected.house_type === "reinforced_concrete"
+                      ? "Железобетонные стены"
+                      : selected.house_type === "other_low_capital"
+                        ? "Пониженная капитальность, прочие материалы"
+                        : "Монолитные/кирпичные стены"}
+                  </Typography>
+                )}
               </Box>
 
               <Divider />
@@ -648,6 +710,50 @@ export const BuildingsListPage: React.FC = () => {
                     }
                   />
                 </Grid>
+                <Grid item xs={12} md={3}>
+                  <FormControl fullWidth>
+                    <InputLabel id="edit-building-kind-label">Тип объекта</InputLabel>
+                    <Select
+                      labelId="edit-building-kind-label"
+                      label="Тип объекта"
+                      value={editForm.is_apartment_building ? "mkd" : "other"}
+                      onChange={(e) =>
+                        setEditForm((p) =>
+                          p ? { ...p, is_apartment_building: e.target.value === "mkd" } : p,
+                        )
+                      }
+                    >
+                      <MenuItem value="mkd">Многоквартирный дом</MenuItem>
+                      <MenuItem value="other">Прочий объект (склад и т.д.)</MenuItem>
+                    </Select>
+                  </FormControl>
+                </Grid>
+                {editForm.is_apartment_building && (
+                  <Grid item xs={12} md={6}>
+                    <FormControl fullWidth>
+                      <InputLabel id="edit-house-type-label">Тип многоквартирного дома (К1)</InputLabel>
+                      <Select
+                        labelId="edit-house-type-label"
+                        label="Тип многоквартирного дома (К1)"
+                        value={editForm.house_type}
+                        onChange={(e) =>
+                          setEditForm((p) =>
+                            p
+                              ? {
+                                  ...p,
+                                  house_type: e.target.value as BuildingCreateForm["house_type"],
+                                }
+                              : p,
+                          )
+                        }
+                      >
+                        <MenuItem value="monolith_brick">Монолитные/кирпичные стены (К1 = 1.00)</MenuItem>
+                        <MenuItem value="reinforced_concrete">Железобетонные стены (К1 = 1.25)</MenuItem>
+                        <MenuItem value="other_low_capital">Пониженная капитальность, прочие материалы (К1 = 1.50)</MenuItem>
+                      </Select>
+                    </FormControl>
+                  </Grid>
+                )}
               </Grid>
 
               <Divider sx={{ my: 2 }} />

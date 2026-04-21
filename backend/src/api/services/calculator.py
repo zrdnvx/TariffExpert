@@ -1,12 +1,26 @@
 from decimal import Decimal, ROUND_HALF_UP
 from typing import List, Optional, Sequence, Any, Dict
+from datetime import datetime, timezone
 from sqlalchemy import select, cast, Integer
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.db.models.models import Building, ReferenceTariff, Calculation, CalculationItem, Organization
+from src.db.models.models import (
+    Building,
+    ReferenceTariff,
+    Calculation,
+    CalculationItem,
+    Organization,
+    ReferenceCoefficient,
+    CoefficientKind,
+    HouseType,
+)
 
 
 class TariffCalculatorService:
+    REPAIR_BASE_TARIFF_NAME = "Отчисления на текущий ремонт конструктивных элементов зданий - базовая ставка"
+    REPAIR_BASE_ITEM_NUMBER = "1.1."
+    LANDSCAPING_BASE_ITEM_NUMBER = "2.4.6."
+
     def __init__(self, db: AsyncSession):
         self.db = db
 
@@ -236,8 +250,9 @@ class TariffCalculatorService:
         """
         selected_tariffs = await self._select_tariffs_for_building(building)
 
+        applied_rates = await self._build_applied_rates(selected_tariffs, building)
         # Итоговый расчет (ставка на 1 м² общей площади)
-        total_sum = sum((t.rate for t in selected_tariffs), Decimal("0.0000"))
+        total_sum = sum((rate for _, rate in applied_rates), Decimal("0.0000"))
 
         # Создаем запись расчета
         new_calc = Calculation(
@@ -251,11 +266,11 @@ class TariffCalculatorService:
         await self.db.flush()
 
         # Сохраняем детализацию
-        for t in selected_tariffs:
+        for t, applied_rate in applied_rates:
             item = CalculationItem(
                 calculation_id=new_calc.id,
                 tariff_id=t.id,  # SQLAlchemy 2.0 обработает Mapped[int] здесь нормально
-                applied_rate=t.rate
+                applied_rate=applied_rate
             )
             self.db.add(item)
 
@@ -276,13 +291,13 @@ class TariffCalculatorService:
         пропорционально их нормативным ставкам.
         """
         tariffs = await self._select_tariffs_for_building(building_like)
-
-        normative_total = sum((t.rate for t in tariffs), Decimal("0.0000"))
+        applied_rates = await self._build_applied_rates(tariffs, building_like)
+        normative_total = sum((rate for _, rate in applied_rates), Decimal("0.0000"))
 
         components: List[Dict[str, Any]] = []
         if normative_total > Decimal("0"):
-            for t in tariffs:
-                share = (t.rate / normative_total).quantize(Decimal("0.0001"))
+            for t, applied_rate in applied_rates:
+                share = (applied_rate / normative_total).quantize(Decimal("0.0001"))
                 applied = (existing_rate * share).quantize(
                     Decimal("0.0001"), rounding=ROUND_HALF_UP
                 )
@@ -290,7 +305,7 @@ class TariffCalculatorService:
                     {
                         "item_number": t.item_number,
                         "name": t.name,
-                        "normative_rate": t.rate,
+                        "normative_rate": applied_rate,
                         "share": share,
                         "applied_rate": applied,
                     }
@@ -300,6 +315,99 @@ class TariffCalculatorService:
             "total_normative_rate": normative_total,
             "components": components,
         }
+
+    async def _build_applied_rates(
+        self, tariffs: Sequence[ReferenceTariff], building: Any
+    ) -> list[tuple[ReferenceTariff, Decimal]]:
+        """
+        Формирует итоговую применяемую ставку по каждому тарифу.
+        Для двух целевых пунктов используется формула БС × К1 × К2.
+        """
+        if not getattr(building, "is_apartment_building", True):
+            return [(t, Decimal(t.rate)) for t in tariffs]
+
+        k1 = await self._resolve_k1(building)
+        k2 = await self._resolve_k2(building)
+        result: list[tuple[ReferenceTariff, Decimal]] = []
+        for tariff in tariffs:
+            base_rate = Decimal(tariff.rate)
+            item_number = (tariff.item_number or "").rstrip(".")
+            if item_number == self.REPAIR_BASE_ITEM_NUMBER.rstrip("."):
+                adjusted = (base_rate * k1 * k2).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+                result.append((tariff, adjusted))
+            elif item_number == self.LANDSCAPING_BASE_ITEM_NUMBER.rstrip("."):
+                adjusted = (base_rate * k2).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+                result.append((tariff, adjusted))
+            else:
+                result.append((tariff, base_rate))
+        return result
+
+    async def _resolve_k1(self, building: Any) -> Decimal:
+        house_type = getattr(building, "house_type", None) or HouseType.MONOLITH_BRICK
+        if isinstance(house_type, HouseType):
+            code = house_type.value
+        else:
+            code = str(house_type)
+        coeff = await self._get_coefficient(getattr(building, "city_id", None), getattr(building, "organization_id", None), CoefficientKind.K1, code)
+        if coeff is not None:
+            return coeff
+        defaults = {
+            HouseType.MONOLITH_BRICK.value: Decimal("1.00"),
+            HouseType.REINFORCED_CONCRETE.value: Decimal("1.25"),
+            HouseType.OTHER_LOW_CAPITAL.value: Decimal("1.50"),
+        }
+        return defaults.get(code, Decimal("1.00"))
+
+    async def _resolve_k2(self, building: Any) -> Decimal:
+        year_built = getattr(building, "year_built", None)
+        if not year_built:
+            return Decimal("1.00")
+        current_year = datetime.now(timezone.utc).year
+        age = max(0, current_year - int(year_built))
+        if age < 5:
+            code = "0_5"
+            default = Decimal("0.50")
+        elif age < 30:
+            code = "5_30"
+            default = Decimal("1.00")
+        elif age < 55:
+            code = "30_55"
+            default = Decimal("1.10")
+        else:
+            code = "55_plus"
+            default = Decimal("1.20")
+
+        coeff = await self._get_coefficient(getattr(building, "city_id", None), getattr(building, "organization_id", None), CoefficientKind.K2, code)
+        return coeff if coeff is not None else default
+
+    async def _get_coefficient(
+        self,
+        city_id,
+        organization_id,
+        kind: CoefficientKind,
+        code: str,
+    ) -> Optional[Decimal]:
+        stmt = (
+            select(ReferenceCoefficient)
+            .where(ReferenceCoefficient.kind == kind)
+            .where(ReferenceCoefficient.code == code)
+            .where(ReferenceCoefficient.is_active.is_(True))
+        )
+        if city_id:
+            stmt = stmt.where(ReferenceCoefficient.city_id == city_id)
+        if organization_id:
+            org_stmt = stmt.where(ReferenceCoefficient.organization_id == organization_id)
+            org_res = await self.db.execute(org_stmt)
+            row = org_res.scalar_one_or_none()
+            if row:
+                return Decimal(row.value)
+
+        base_stmt = stmt.where(ReferenceCoefficient.organization_id.is_(None))
+        base_res = await self.db.execute(base_stmt)
+        row = base_res.scalar_one_or_none()
+        if row:
+            return Decimal(row.value)
+        return None
 
     def _get_networks_suffix(self, b: Any) -> str:
         """

@@ -56,6 +56,43 @@ def _outer_border_for_cell(row: int, col: str, top: int, bottom: int, left_col: 
     )
 
 
+async def _build_items_with_formulas(
+    calc: Calculation, db: AsyncSession
+):
+    service = TariffCalculatorService(db)
+    building = calc.building
+    k1 = await service._resolve_k1(building) if building else None
+    k2 = await service._resolve_k2(building) if building else None
+    result = []
+    for item in calc.items:
+        formula_label = None
+        formula_substitution = None
+        base_rate = Decimal(item.tariff.rate) if item.tariff else Decimal(item.applied_rate)
+        applied = Decimal(item.applied_rate)
+        item_number = (item.item_number or "").rstrip(".")
+        if (
+            item_number == TariffCalculatorService.REPAIR_BASE_ITEM_NUMBER.rstrip(".")
+            and k1
+            and k2
+        ):
+            formula_label = "Птрк = БС × К1 × К2"
+            formula_substitution = f"{base_rate:.4f} × {k1:.4f} × {k2:.4f} = {applied:.4f}"
+        elif item_number == TariffCalculatorService.LANDSCAPING_BASE_ITEM_NUMBER.rstrip(".") and k2:
+            formula_label = "Пбпт = БС × К2"
+            formula_substitution = f"{base_rate:.4f} × {k2:.4f} = {applied:.4f}"
+        result.append(
+            {
+                "id": item.id,
+                "item_number": item.item_number,
+                "name": item.name,
+                "applied_rate": applied,
+                "formula_label": formula_label,
+                "formula_substitution": formula_substitution,
+            }
+        )
+    return result
+
+
 @router.post("/{building_id}/run", response_model=CalculationResponse)
 async def run_calculation(
     building_id: UUID,
@@ -80,7 +117,14 @@ async def run_calculation(
         .where(Calculation.id == result.id)
     )
     result_with_items = await db.execute(stmt)
-    return result_with_items.scalar_one()
+    calc = result_with_items.scalar_one()
+    items = await _build_items_with_formulas(calc, db)
+    return CalculationResponse(
+        id=calc.id,
+        building_id=calc.building_id,
+        total_rate=calc.total_rate,
+        items=items,
+    )
 
 
 @router.get("/", response_model=list[CalculationHistoryItemResponse])
@@ -129,13 +173,14 @@ async def get_calculation(
     if calc.organization_id != user.organization_id and user.role != "superadmin":
         raise HTTPException(status_code=404, detail="Calculation not found")
 
+    items = await _build_items_with_formulas(calc, db)
     return CalculationDetailResponse(
         id=calc.id,
         building_id=calc.building_id,
         building_address=calc.building.address if calc.building else "—",
         created_at=calc.created_at,
         total_rate=calc.total_rate,
-        items=calc.items,
+        items=items,
     )
 
 
@@ -183,13 +228,14 @@ async def update_calculation(
     refreshed_res = await db.execute(refreshed_stmt)
     updated = refreshed_res.scalar_one()
 
+    items = await _build_items_with_formulas(updated, db)
     return CalculationDetailResponse(
         id=updated.id,
         building_id=updated.building_id,
         building_address=updated.building.address if updated.building else "—",
         created_at=updated.created_at,
         total_rate=updated.total_rate,
-        items=updated.items,
+        items=items,
     )
 
 
@@ -287,9 +333,10 @@ async def export_calculation_to_excel(
     total_font = Font(color="000000", bold=True, size=11)
 
     ws.column_dimensions["A"].width = 14
-    ws.column_dimensions["B"].width = 92
-    ws.column_dimensions["C"].width = 26
-    ws.column_dimensions["D"].width = 28
+    ws.column_dimensions["B"].width = 78
+    ws.column_dimensions["C"].width = 24
+    ws.column_dimensions["D"].width = 20
+    ws.column_dimensions["E"].width = 44
 
     building = calc.building
     total_area = float(building.total_area) if building else 0.0
@@ -298,17 +345,27 @@ async def export_calculation_to_excel(
     created_time_str = created_dt_utc.strftime("%H:%M UTC")
     created_date_for_filename = calc.created_at.astimezone(timezone.utc).strftime("%Y-%m-%d")
     total_amount = float(calc.total_rate) * total_area
+    service = TariffCalculatorService(db)
+    k1 = await service._resolve_k1(building) if building else None
+    k2 = await service._resolve_k2(building) if building else None
+    house_type_labels = {
+        "monolith_brick": "Монолитные/кирпичные стены",
+        "reinforced_concrete": "Железобетонные стены",
+        "other_low_capital": "Пониженная капитальность, прочие материалы",
+    }
+    house_type_value = getattr(building, "house_type", None)
+    house_type_key = house_type_value.value if hasattr(house_type_value, "value") else house_type_value
 
     # Заголовок как в образце
-    ws.merge_cells("A1:D1")
+    ws.merge_cells("A1:E1")
     ws["A1"] = "П Е Р Е Ч Е Н Ь"
     ws["A1"].font = title_font
     ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
-    ws.merge_cells("A2:D2")
+    ws.merge_cells("A2:E2")
     ws["A2"] = "работ и услуг по содержанию и ремонту общего имущества"
     ws["A2"].font = Font(bold=True, size=10)
     ws["A2"].alignment = Alignment(horizontal="center")
-    ws.merge_cells("A3:D3")
+    ws.merge_cells("A3:E3")
     ws["A3"] = (
         f"в многоквартирном доме по адресу: {building.address if building else '—'}"
     )
@@ -330,6 +387,10 @@ async def export_calculation_to_excel(
         ("Общая площадь дома, кв.м", total_area),
         ("Этажность дома", building.floors_count if building else "—"),
         ("Год ввода в эксплуатацию", building.year_built if building else "—"),
+        ("Тип объекта", "Многоквартирный дом" if getattr(building, "is_apartment_building", True) else "Прочий объект"),
+        ("Тип многоквартирного дома (К1)", house_type_labels.get(house_type_key, "—") if getattr(building, "is_apartment_building", True) else "Не применяется"),
+        ("Коэффициент К1", float(k1) if k1 is not None and getattr(building, "is_apartment_building", True) else "Не применяется"),
+        ("Коэффициент К2", float(k2) if k2 is not None and getattr(building, "is_apartment_building", True) else "Не применяется"),
         ("Лифт", yes_no(getattr(building, "has_elevator", False))),
         ("Газ", yes_no(getattr(building, "has_gas", False))),
         ("Мусоропровод", yes_no(getattr(building, "has_trash_chute", False))),
@@ -367,7 +428,8 @@ async def export_calculation_to_excel(
     ws.merge_cells(f"A{row}:B{row}")
     ws[f"C{row}"] = "Плановая стоимость работ в год, руб"
     ws[f"D{row}"] = "Стоимость на 1 кв.м в месяц, руб"
-    for col in ("A", "B", "C", "D"):
+    ws[f"E{row}"] = "Формула и подстановка"
+    for col in ("A", "B", "C", "D", "E"):
         ws[f"{col}{row}"].font = header_font
         ws[f"{col}{row}"].fill = header_fill
         ws[f"{col}{row}"].alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
@@ -382,16 +444,33 @@ async def export_calculation_to_excel(
         ws[f"B{row}"] = item.name
         ws[f"C{row}"] = annual_amount
         ws[f"D{row}"] = float(item.applied_rate)
+        formula_text = "—"
+        item_num = (item.item_number or "").rstrip(".")
+        base_rate = Decimal(item.tariff.rate) if item.tariff else Decimal(item.applied_rate)
+        applied_rate = Decimal(item.applied_rate)
+        if item_num == TariffCalculatorService.REPAIR_BASE_ITEM_NUMBER.rstrip(".") and k1 is not None and k2 is not None:
+            formula_text = (
+                f"Птрк = БС × К1 × К2\n"
+                f"{base_rate:.4f} × {Decimal(k1):.4f} × {Decimal(k2):.4f} = {applied_rate:.4f}"
+            )
+        elif item_num == TariffCalculatorService.LANDSCAPING_BASE_ITEM_NUMBER.rstrip(".") and k2 is not None:
+            formula_text = (
+                f"Пбпт = БС × К2\n"
+                f"{base_rate:.4f} × {Decimal(k2):.4f} = {applied_rate:.4f}"
+            )
+        ws[f"E{row}"] = formula_text
 
         ws[f"A{row}"].alignment = Alignment(horizontal="center", vertical="top")
         ws[f"B{row}"].alignment = Alignment(wrap_text=True, vertical="top")
         ws[f"C{row}"].alignment = Alignment(horizontal="right", vertical="top")
         ws[f"D{row}"].alignment = Alignment(horizontal="right", vertical="top")
+        ws[f"E{row}"].alignment = Alignment(wrap_text=True, vertical="top")
 
         ws[f"A{row}"].font = normal_font
         ws[f"B{row}"].font = normal_font
         ws[f"C{row}"].font = normal_font
         ws[f"D{row}"].font = normal_font
+        ws[f"E{row}"].font = normal_font
         ws[f"C{row}"].number_format = "#,##0.00"
         ws[f"D{row}"].number_format = "#,##0.0000"
 
@@ -399,6 +478,7 @@ async def export_calculation_to_excel(
         ws[f"B{row}"].border = thin_border
         ws[f"C{row}"].border = thin_border
         ws[f"D{row}"].border = thin_border
+        ws[f"E{row}"].border = thin_border
         row += 1
 
     ws.merge_cells(f"A{row}:B{row}")
@@ -417,6 +497,7 @@ async def export_calculation_to_excel(
     ws[f"B{row}"].border = thin_border
     ws[f"C{row}"].border = thin_border
     ws[f"D{row}"].border = thin_border
+    ws[f"E{row}"].border = thin_border
 
     # Высота строк
     for current_row in range(start_table_row + 1, row):
